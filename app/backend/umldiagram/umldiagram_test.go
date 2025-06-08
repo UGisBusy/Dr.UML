@@ -310,8 +310,6 @@ func TestRemoveGadget(t *testing.T) {
 }
 
 func TestAssociationMethods(t *testing.T) {
-	// TODO
-
 	diagram, _ := CreateEmptyUMLDiagram("TestDiagram", ClassDiagram)
 
 	gadgetPoint0 := utils.Point{X: 0, Y: 0}
@@ -543,22 +541,6 @@ func TestAddAttributeToGadget(t *testing.T) {
 	err = diagram.AddAttributeToGadget(0, "attribute")
 	assert.Error(t, err)
 	assert.Equal(t, "can only operate on one component", err.Error())
-}
-
-func TestAddAttributeToAssociation(t *testing.T) {
-	// TODO
-}
-
-func TestRemoveAttributeFromAssociation(t *testing.T) {
-	// TODO
-}
-
-func TestAttributeSettersGadget(t *testing.T) {
-	// TODO
-}
-
-func TestAttributeSettersAssociation(t *testing.T) {
-	// TODO
 }
 
 // Mock container for testing selection methods

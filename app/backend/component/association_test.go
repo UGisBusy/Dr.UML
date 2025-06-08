@@ -276,9 +276,89 @@ func Test_Association_RegisterUpdateParentDraw(t *testing.T) {
 }
 
 func Test_Association_Selected(t *testing.T) {
-	// TODO
+	stPoint := utils.Point{X: 0, Y: 0}
+	enPoint := utils.Point{X: 200, Y: 200}
+	stGadget, _ := NewGadget(Class, stPoint, 0, drawdata.DefaultGadgetColor, "")
+	enGadget, _ := NewGadget(Class, enPoint, 0, drawdata.DefaultGadgetColor, "")
+	ass, _ := NewAssociation([2]*Gadget{stGadget, enGadget}, Extension, stPoint, enPoint)
+	ass.RegisterUpdateParentDraw(func() duerror.DUError { return nil })
+
+	if ass.GetIsSelected() {
+		t.Errorf("ass should be unselect when created")
+	}
+
+	err := ass.SetIsSelected(true)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !ass.GetIsSelected() {
+		t.Errorf("ass SetIsSelected(true) doesnt work")
+	}
+
+	err = ass.SetIsSelected(false)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if ass.GetIsSelected() {
+		t.Errorf("ass SetIsSelected(false) doesnt work")
+	}
 }
 
 func Test_Association_Attribute(t *testing.T) {
-	// TODO
+
+	stPoint := utils.Point{X: 0, Y: 0}
+	enPoint := utils.Point{X: 200, Y: 200}
+	stGadget, _ := NewGadget(Class, stPoint, 0, drawdata.DefaultGadgetColor, "")
+	enGadget, _ := NewGadget(Class, enPoint, 0, drawdata.DefaultGadgetColor, "")
+	ass, _ := NewAssociation([2]*Gadget{stGadget, enGadget}, Extension, stPoint, enPoint)
+
+	ratio := 0.5
+	content := "old content"
+	index := 0
+	ass.AddAttribute(ratio, content)
+	att := ass.attributes[index]
+	t.Run("SetAttrContent", func(t *testing.T) {
+		newContent := "new content"
+		err := ass.SetAttrContent(index, newContent)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if att.GetContent() != newContent {
+			t.Errorf("expected content: %v, got %v", newContent, att.GetContent())
+		}
+		content = newContent
+	})
+	t.Run("SetAttrSize", func(t *testing.T) {
+		newSize := 69
+		err := ass.SetAttrSize(index, newSize)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if att.GetSize() != newSize {
+			t.Errorf("expected size: %v, got %v", newSize, att.GetSize())
+		}
+	})
+	t.Run("SetAttrStyle", func(t *testing.T) {
+		newStyle := 0x4
+		err := ass.SetAttrStyle(index, newStyle)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if int(att.GetStyle()) != newStyle {
+			t.Errorf("expected size: %v, got %v", newStyle, int(att.GetStyle()))
+		}
+	})
+	t.Run("SetAttrFontFile", func(t *testing.T) {
+		// dont care
+	})
+	t.Run("SetAttrRatio", func(t *testing.T) {
+		newRatio := 0.69
+		err := ass.SetAttrRatio(index, newRatio)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if att.GetRatio() != newRatio {
+			t.Errorf("expected size: %v, got %v", newRatio, att.GetRatio())
+		}
+	})
 }
