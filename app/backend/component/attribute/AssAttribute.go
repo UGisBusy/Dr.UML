@@ -2,14 +2,16 @@ package attribute
 
 import (
 	"Dr.uml/backend/drawdata"
+	"Dr.uml/backend/utils"
 	"Dr.uml/backend/utils/duerror"
 )
 
 // AssAttribute represents an attribute specific to associations with a ratio property
 type AssAttribute struct {
 	Attribute
-	ratio float64
-	assDD drawdata.AssAttribute
+	ratio                 float64
+	assDD                 drawdata.AssAttribute
+	updateParentDrawOuter func() duerror.DUError
 }
 
 // NewAssAttribute creates a new AssAttribute instance with the specified ratio
@@ -26,8 +28,36 @@ func NewAssAttribute(ratio float64, content string) (*AssAttribute, duerror.DUEr
 		Attribute: *tmp,
 		ratio:     ratio,
 	}
+	att.Attribute.RegisterUpdateParentDraw(func() duerror.DUError {
+		att.updateDrawData()
+		return nil
+	})
 	att.updateDrawData()
 	return att, nil
+}
+
+func FromSavedAssAttribute(savedAssAtt utils.SavedAtt) (*AssAttribute, duerror.DUError) {
+	ass := &AssAttribute{
+		Attribute: Attribute{
+			content:  savedAssAtt.Content,
+			size:     savedAssAtt.Size,
+			style:    Textstyle(savedAssAtt.Style),
+			fontFile: savedAssAtt.FontFile,
+		},
+		ratio: savedAssAtt.Ratio,
+	}
+	ass.updateDrawData()
+	return ass, nil
+}
+
+func (att *AssAttribute) ToSavedAssAttribute() utils.SavedAtt {
+	return utils.SavedAtt{
+		Content:  att.content,
+		Size:     att.size,
+		Style:    int(att.style),
+		FontFile: att.fontFile,
+		Ratio:    att.ratio,
+	}
 }
 
 // GetRatio retrieves the ratio value of the AssAttribute
@@ -50,13 +80,27 @@ func (att *AssAttribute) SetRatio(ratio float64) duerror.DUError {
 	return nil
 }
 
-func (att *AssAttribute) updateDrawData() {
+func (att *AssAttribute) updateDrawData() duerror.DUError {
+	height, _, err := utils.GetTextSize(att.content, att.size, att.fontFile)
+	if err != nil {
+		return err
+	}
+	att.assDD.Height = height
 	att.assDD.Content = att.content
 	att.assDD.FontSize = att.size
 	att.assDD.FontStyle = int(att.style)
-	att.assDD.FontFile = att.fontFile
+	att.assDD.FontFile = att.getFontFileBase()
 	att.assDD.Ratio = att.ratio
-	if att.updateParentDraw != nil {
-		att.updateParentDraw()
+	if att.updateParentDrawOuter != nil {
+		att.updateParentDrawOuter()
 	}
+	return nil
+}
+
+func (att *AssAttribute) RegisterUpdateParentDraw(update func() duerror.DUError) duerror.DUError {
+	if update == nil {
+		return duerror.NewInvalidArgumentError("update function is nil")
+	}
+	att.updateParentDrawOuter = update
+	return nil
 }

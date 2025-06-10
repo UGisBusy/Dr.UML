@@ -1,8 +1,11 @@
 package umldiagram
 
 import (
+	"fmt"
 	"slices"
 	"time"
+
+	"Dr.uml/backend/component/attribute"
 
 	"Dr.uml/backend/component"
 	"Dr.uml/backend/components"
@@ -44,7 +47,9 @@ type UMLDiagram struct {
 
 	componentsContainer components.Container
 	componentsSelected  map[component.Component]bool
-	associations        map[*component.Gadget]([2][]*component.Association)
+	associations        map[*component.Gadget][2][]*component.Association
+
+	lastSave time.Time // for saving and loading
 
 	updateParentDraw func() duerror.DUError
 	drawData         drawdata.Diagram
@@ -76,9 +81,28 @@ func CreateEmptyUMLDiagram(name string, dt DiagramType) (*UMLDiagram, duerror.DU
 	}, nil
 }
 
-func LoadExistUMLDiagram(name string) (*UMLDiagram, duerror.DUError) {
-	// TODO
-	return CreateEmptyUMLDiagram(name, ClassDiagram)
+func LoadExistUMLDiagram(filename string, file utils.SavedDiagram) (*UMLDiagram, duerror.DUError) {
+	dia, err := CreateEmptyUMLDiagram(filename, DiagramType(file.Filetype)) // Shift right to remove the filetype bit
+	if err != nil {
+		return nil, err
+	}
+
+	dp, err := dia.loadGadgets(file.Gadgets)
+	if err != nil {
+		return nil, duerror.NewCorruptedFile(fmt.Sprintf(err.Error()+"from %s", filename))
+	}
+
+	if err = dia.loadAsses(file.Associations, dp); err != nil {
+		return nil, err
+	}
+
+	if err = dia.updateDrawData(); err != nil {
+		return nil, err
+	}
+
+	dia.name = filename
+
+	return dia, nil
 }
 
 // Getters
@@ -351,7 +375,7 @@ func (ud *UMLDiagram) EndAddAssociation(assType component.AssociationType, endPo
 
 	// create association
 	parents := [2]*component.Gadget{stGad, enGad}
-	a, err := component.NewAssociation(parents, component.AssociationType(assType), stPoint, endPoint)
+	a, err := component.NewAssociation(parents, assType, stPoint, endPoint)
 	if err != nil {
 		return err
 	}
@@ -415,7 +439,7 @@ func (ud *UMLDiagram) SelectComponent(point utils.Point) duerror.DUError {
 			ud.componentsSelected[c] = true
 		}
 	}
-	//ud.componentsSelected[c] = true
+	// ud.componentsSelected[c] = true
 	return ud.updateDrawData()
 }
 
@@ -555,6 +579,169 @@ func (ud *UMLDiagram) validatePoint(point utils.Point) duerror.DUError {
 	return nil
 }
 
+func (ud *UMLDiagram) loadGadgetAttributes(gadget *component.Gadget, attributes []utils.SavedAtt) (duerror.DUError, int) {
+	const SectionBound = 0.3 // A gadget has 3 sections: header, attributes, methods. Saving sections in SavedAtt.Ratio
+	if gadget == nil {
+		return duerror.NewInvalidArgumentError("Cannot load attributes to a nil gadget"), 0
+	}
+	for index, savedAtt := range attributes {
+		newAtt, err := attribute.FromSavedAttribute(savedAtt)
+		if err != nil {
+			return err, index
+		}
+
+		if err = gadget.AddBuiltAttribute(int(savedAtt.Ratio/SectionBound), newAtt); err != nil {
+			return err, index
+		}
+	}
+	return nil, 0
+}
+
+func (ud *UMLDiagram) loadGadgets(gadgets []utils.SavedGad) (map[int]*component.Gadget, duerror.DUError) {
+	dp := make(map[int]*component.Gadget)
+
+	// Load Gadgets
+	for index, savedGadget := range gadgets {
+		gadget, err := component.FromSavedGadget(savedGadget)
+		if err != nil {
+			return nil, err
+		}
+
+		if err, errIndex := ud.loadGadgetAttributes(gadget, savedGadget.Attributes); err != nil {
+			return nil, duerror.NewCorruptedFile(fmt.Sprintf(
+				"Error on parsing %d-th attribute of %d-th gadget.  Detail: %s",
+				errIndex, index, err.Error()),
+			)
+		}
+
+		// Code below suffers from #89. If anything is being added, put 'em above.
+		// Stuff done by UD.AddGadget.
+		// Replace these shitty code with it when it won't cause a series of useless overhead.
+		if err = gadget.RegisterUpdateParentDraw(ud.updateDrawData); err != nil {
+			return nil, err
+		}
+		if err = ud.componentsContainer.Insert(gadget); err != nil {
+			return nil, err
+		}
+		ud.associations[gadget] = [2][]*component.Association{{}, {}}
+
+		dp[index] = gadget
+	}
+
+	return dp, nil
+}
+
+func (ud *UMLDiagram) loadAssAttributes(ass *component.Association, attributes []utils.SavedAtt) (duerror.DUError, int) {
+	if ass == nil {
+		return duerror.NewInvalidArgumentError("UR loading attributes to a nil ass"), 0
+	}
+	for index, savedAtt := range attributes {
+		newAtt, err := attribute.FromSavedAssAttribute(savedAtt)
+		if err != nil {
+			return err, index
+		}
+		if err = ass.AddLoadedAttribute(newAtt); err != nil {
+			return err, index
+		}
+	}
+	return nil, 0
+}
+
+func (ud *UMLDiagram) loadAsses(asses []utils.SavedAss, dp map[int]*component.Gadget) duerror.DUError {
+	for index, ass := range asses {
+		parents := [2]*component.Gadget{dp[ass.Parents[0]], dp[ass.Parents[1]]}
+		newAss, err := component.FromSavedAssociation(ass, parents)
+		if err != nil {
+			return duerror.NewCorruptedFile(fmt.Sprintf("Error on creating %d-th association: %s", index, err.Error()))
+		}
+		if err = ud.componentsContainer.Insert(newAss); err != nil {
+			return err
+		}
+		if err, attIndex := ud.loadAssAttributes(newAss, ass.Attributes); err != nil {
+			return duerror.NewCorruptedFile(fmt.Sprintf("Error on adding %d-th attribute for %d-th association: %s", attIndex, index, err.Error()))
+		}
+
+		// I'm a thief
+		tmp := ud.associations[parents[0]]
+		tmp[0] = append(tmp[0], newAss)
+		ud.associations[parents[0]] = tmp
+
+		tmp = ud.associations[parents[1]]
+		tmp[1] = append(tmp[1], newAss)
+		ud.associations[parents[1]] = tmp
+
+		if err = newAss.RegisterUpdateParentDraw(ud.updateDrawData); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+func (ud *UMLDiagram) collectGadgets(res *utils.SavedDiagram) (map[*component.Gadget]int, duerror.DUError) {
+	dp := make(map[*component.Gadget]int, ud.componentsContainer.Len())
+	cnt := 0
+	for _, comp := range ud.componentsContainer.GetAll() {
+		switch comp.(type) {
+		case *component.Gadget:
+			if _, ok := dp[comp.(*component.Gadget)]; !ok {
+				dp[comp.(*component.Gadget)] = cnt
+				res.Gadgets = append(res.Gadgets, comp.(*component.Gadget).ToSavedGadget())
+				cnt++
+			}
+		default:
+			continue
+		}
+	}
+	return dp, nil
+}
+
+func (ud *UMLDiagram) collectAssociations(dp map[*component.Gadget]int, res *utils.SavedDiagram) duerror.DUError {
+	for comp, index := range dp {
+		for _, ass := range ud.associations[comp][0] {
+			milkBuyer := ass.GetParentEnd()
+			milkBuyerIndex, ok := dp[milkBuyer]
+			if !ok {
+				return duerror.NewParsingError("SecondParent not found")
+			}
+			res.Associations = append(res.Associations, ass.ToSavedAssociation(
+				[2]int{
+					index, milkBuyerIndex,
+				}))
+		}
+	}
+	return nil
+}
+
+func (ud *UMLDiagram) SaveToFile(filename string) (*utils.SavedDiagram, duerror.DUError) {
+	if filename != ud.name {
+		ud.name = filename
+	}
+
+	res := &utils.SavedDiagram{
+		Filetype:     utils.FiletypeDiagram | int(ud.diagramType)<<1,
+		LastEdit:     "",
+		Gadgets:      nil,
+		Associations: nil,
+	}
+
+	dp, err := ud.collectGadgets(res)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ud.collectAssociations(dp, res); err != nil {
+		return nil, err
+	}
+	ud.lastSave = time.Now()
+	res.LastEdit = ud.lastSave.Format(time.RFC3339)
+
+	return res, nil
+}
+
+func (ud *UMLDiagram) HasUnsavedChanges() bool {
+	return ud.lastModified.After(ud.lastSave)
+}
+
 // draw
 func (ud *UMLDiagram) GetDrawData() drawdata.Diagram {
 	return ud.drawData
@@ -589,5 +776,6 @@ func (ud *UMLDiagram) updateDrawData() duerror.DUError {
 	if ud.updateParentDraw == nil {
 		return nil
 	}
+	ud.lastModified = time.Now()
 	return ud.updateParentDraw()
 }
